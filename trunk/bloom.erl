@@ -11,39 +11,33 @@ new(N, E) when N > 0, is_float(E), E > 0, E =< 1 ->
 
 is_element(Key, B) -> is_element(Key, B, calc_idxs(Key, B)).
 is_element(_, _, []) -> true;
-is_element(Key, B, [{BitIdx, ByteIdx} | T]) ->
-    <<_:ByteIdx/binary, Byte, _/binary>> = B#bloom.bitmap,
-    Mask = 1 bsl (BitIdx rem 8),
-    case Byte band Mask =/= 0 of
-        true -> is_element(Key, B, T);
+is_element(Key, B, [Idx | T]) ->
+    ByteIdx = Idx div 8,
+    <<_:ByteIdx/binary, Byte:8, _/binary>> = B#bloom.bitmap,
+    Mask = 1 bsl (Idx rem 8),
+    case 0 =/= Byte band Mask of
+         true -> is_element(Key, B, T);
         false -> false
     end.
-    
+
 add_element(Key, #bloom{keys=Keys, n=N, bitmap=Bitmap} = B) when Keys =< N ->
-    Idxs = lists:keysort(1, calc_idxs(Key, B)),
-    {Count, Bitmap0} = set_bits(Bitmap, Idxs),
-    case Count of
-        0 -> B;
-        _ -> B#bloom{bitmap=Bitmap0, keys=Keys+1}
+    Idxs = calc_idxs(Key, B),
+    Bitmap0 = set_bits(Bitmap, Idxs),
+    % Don't incremement key count for duplicates.
+    case Bitmap0 == Bitmap of
+         true -> B;
+        false -> B#bloom{bitmap=Bitmap0, keys=Keys+1}
     end.
 
-set_bits(Bin, Idxs) -> set_bits(Bin, binary_to_list(Bin), 0, Idxs, [], 0).
-set_bits(Bin, [Byte | Bytes], I, [{BitIdx, ByteIdx} | Idxs], Acc, Count) ->
-    if ByteIdx =:= I ->
-        Mask = 1 bsl (BitIdx rem 8),
-        Byte0 = Byte bor Mask,
-        Count0 = if Byte =/= Byte0 -> Count+1; true -> Count end,
-        set_bits(Bin, [Byte0 | Bytes], I, Idxs, Acc, Count0);
-    true ->
-        set_bits(Bin, Bytes, I+1, [{BitIdx, ByteIdx} | Idxs], [Byte | Acc],
-                 Count)
-    end;
-set_bits(Bin, [Byte | Bytes], I, [], Acc, Count) -> 
-    set_bits(Bin, Bytes, I, [], [Byte | Acc], Count);
-set_bits(Bin, [], _, _, _, 0) -> {0, Bin};
-set_bits(_, [], _, _, Acc, Count) ->
-    {Count, list_to_binary(lists:reverse(Acc))}.
+set_bits(Bin, []) -> Bin;
+set_bits(Bin, [Idx | Idxs]) ->
+    ByteIdx = Idx div 8,
+    <<Pre:ByteIdx/binary, Byte:8, Post/binary>> = Bin,
+    Mask = 1 bsl (Idx rem 8),
+    Byte0 = Byte bor Mask,
+    set_bits(<<Pre/binary, Byte0:8, Post/binary>>, Idxs).
 
+% Find the optimal bitmap size and number of hashes.
 calc_least_bits(N, E) -> calc_least_bits(N, E, 1, 0, 0).
 calc_least_bits(N, E, K, MinM, BestK) ->
     M = -1 * K * N / math:log(1 - math:pow(E, 1/K)),
@@ -54,12 +48,14 @@ calc_least_bits(N, E, K, MinM, BestK) ->
           _ -> calc_least_bits(N, E, K+1, CurM, CurK)
     end.
 
+% This uses the "enhanced double hashing" algorithm.
 % Todo: handle case of m > 2^32.
 calc_idxs(Key, #bloom{m=M, k=K}) ->
-    [X, Y] = [erlang:phash2(X, M) || X <- [Key, {Key, "salt"}]],
-    calc_idxs(M, K - 1, X, Y, [{X, X bsr 3}]).
+    X = erlang:phash2(Key, M),
+    Y = erlang:phash2({"salt", Key}, M),
+    calc_idxs(M, K - 1, X, Y, [X]).
 calc_idxs(_, 0, _, _, Acc) -> Acc;
 calc_idxs(M, I, X, Y, Acc) ->
     Xi = (X+Y) rem M,
     Yi = (Y+I) rem M,
-    calc_idxs(M, I-1, Xi, Yi, [{Xi, Xi bsr 3} | Acc]).
+    calc_idxs(M, I-1, Xi, Yi, [Xi | Acc]).
