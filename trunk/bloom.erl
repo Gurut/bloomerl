@@ -21,7 +21,7 @@ new(N) -> new(N, 0.001).
 %%     false-positive error rate.
 new(N, E) when N > 0, is_float(E), E > 0, E =< 1 ->
     {M, K} = calc_least_bits(N, E),
-    #bloom{m=M, bitmap = <<0:(M+8 - M band 7)>>, k=K, n=N}.
+    #bloom{m=M, bitmap = <<0:((M+7) div 8 * 8)>>, k=K, n=N}.
 %new(M, K) when M > 0, is_integer(K), K > 0 -> throw(unimplemented).
 
 %% @spec is_bloom(bloom()) -> bool()
