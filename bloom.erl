@@ -3,6 +3,8 @@
 
 -module(bloom).
 -export([new/1, new/2, is_bloom/1, is_element/2, add_element/2]).
+-import(math, [log/1, pow/2]).
+-import(erlang, [phash2/2]).
 
 -record(bloom, {
     m      = 0,       % The size of the bitmap in bits.
@@ -22,7 +24,6 @@ new(N) -> new(N, 0.001).
 new(N, E) when N > 0, is_float(E), E > 0, E =< 1 ->
     {M, K} = calc_least_bits(N, E),
     #bloom{m=M, bitmap = <<0:((M+7) div 8 * 8)>>, k=K, n=N}.
-%new(M, K) when M > 0, is_integer(K), K > 0 -> throw(unimplemented).
 
 %% @spec is_bloom(bloom()) -> bool()
 %% @doc Determines if the given argument is a bloom record.
@@ -44,7 +45,7 @@ is_element(Key, B, [Idx | T]) ->
 
 %% @spec add_element(string(), bloom()) -> bloom()
 %% @doc Adds the key to the filter.
-add_element(Key, #bloom{keys=Keys, n=N, bitmap=Bitmap} = B) when Keys =< N ->
+add_element(Key, #bloom{keys=Keys, n=N, bitmap=Bitmap} = B) when Keys < N ->
     Idxs = calc_idxs(Key, B),
     Bitmap0 = set_bits(Bitmap, Idxs),
     case Bitmap0 == Bitmap of
@@ -63,7 +64,7 @@ set_bits(Bin, [Idx | Idxs]) ->
 % Find the optimal bitmap size and number of hashes.
 calc_least_bits(N, E) -> calc_least_bits(N, E, 1, 0, 0).
 calc_least_bits(N, E, K, MinM, BestK) ->
-    M = -1 * K * N / math:log(1 - math:pow(E, 1/K)),
+    M = -1 * K * N / log(1 - pow(E, 1/K)),
     {CurM, CurK} = if M < MinM -> {M, K}; true -> {MinM, BestK} end,
     case K of
           1 -> calc_least_bits(N, E, K+1, M, K);
@@ -74,8 +75,8 @@ calc_least_bits(N, E, K, MinM, BestK) ->
 % This uses the "enhanced double hashing" algorithm.
 % Todo: handle case of m > 2^32.
 calc_idxs(Key, #bloom{m=M, k=K}) ->
-    X = erlang:phash2(Key, M),
-    Y = erlang:phash2({"salt", Key}, M),
+    X = phash2(Key, M),
+    Y = phash2({"salt", Key}, M),
     calc_idxs(M, K - 1, X, Y, [X]).
 calc_idxs(_, 0, _, _, Acc) -> Acc;
 calc_idxs(M, I, X, Y, Acc) ->
