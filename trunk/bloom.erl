@@ -49,7 +49,7 @@ add_element(Key, #bloom{keys=Keys, n=N, bitmap=Bitmap} = B) when Keys < N ->
     Idxs = calc_idxs(Key, B),
     Bitmap0 = set_bits(Bitmap, Idxs),
     case Bitmap0 == Bitmap of
-         true -> B;    % Don't incremement key count for duplicates.
+         true -> B;    % Don't increment key count for duplicates.
         false -> B#bloom{bitmap=Bitmap0, keys=Keys+1}
     end.
 
